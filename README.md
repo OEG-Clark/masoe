@@ -8,8 +8,79 @@
 
 This repository provides the artifact for `MASEO`, a research-oriented multi-agent system that automated generate ontologies from competency questions, with a built-in focus on explainability. It aims to make the process of ontology generation more transparent, modular, and intelligent by distributing tasks among specialized agents. Each specialized agent is designed to keep track the logic behind each entity in generated ontology. 
 
+## MASEO Version Overview
 
-## MASOE Structural Overview
+The repository contains three versions of the MASEO pipeline and a web application built on the latest one. Each folder has its own README with the workflow, features and execution details.
+
+| Version | Folder | Orchestration | Description |
+|---------|--------|---------------|-------------|
+| `MASEO` | [src/maseo](src/maseo) | [Agno](https://docs.agno.com/) workflow | The original pipeline: four agents generate the ontology, then repair its syntax, logical consistency and modelling pitfalls in turn |
+| `MASEO-MCP` | [src/maseo_mcp](src/maseo_mcp) | [LangGraph](https://langchain-ai.github.io/langgraph/) + one MCP server | An agent-MCP-tool loop: extraction, generation and correction agents, with five quality checks exposed as tools on a stdio MCP server |
+| `MASEO-Atomic` | [src/maseo_atomic](src/maseo_atomic) | [LangGraph](https://langchain-ai.github.io/langgraph/) + Modular MCP servers | The current version: CQs are atomized with the CLaRO templates and processed into refined terms, axioms and tests before generation; five MCP tool servers drive the validation loop |
+| `MASEO Web App` | [src/maseo_atomic_n8n](src/maseo_atomic_n8n) | [n8n](https://n8n.io/) + FastAPI + Docker | A web application that queues jobs and runs MASEO-Atomic on a server with [Ollama](https://ollama.com/), with a live pipeline diagram and file downloads |
+
+## Feature Comparison
+
+| Feature | MASEO | MASEO-MCP | MASEO-Atomic |
+|---------|:-----:|:---------:|:------------:|
+| Foundation | Agno workflow | LangGraph + one MCP server (five tools) | LangGraph + five MCP servers (one tool each) |
+| Agents | 4 | 3 | 8 |
+| CQ processing before generation | — | CQ → term mapping | atomization, term extraction, identification, refinement |
+| Quality checks | syntax, HermiT, OOPS! | syntax, CQ coverage, OOPS!, HermiT, Themis | syntax, CQ coverage, OOPS!, HermiT, Themis |
+| Provenance | `vaem:rationale` + `dc:source` per entity | step log + event trace | PROV-O provenance ontology + step log |
+
+## External tools requirements
+
+| Tool | Purpose | Used by | Setup |
+|------|---------|---------|-------|
+| [HermiT Reasoner](http://www.hermit-reasoner.com/) | Logical consistency checking | all versions | `HermiT.jar` is bundled in each version's folder |
+| [OOPS! REST API](https://oops.linkeddata.es/) | Ontology pitfall detection | all versions | No local setup required — uses the public REST endpoint |
+| [Themis](https://themis.linkeddata.es/) | CQ semantic coverage (test execution) | MASEO-MCP, MASEO-Atomic, Web App | `themis.jar` is bundled; it also calls the Themis web service, so internet access is required |
+| Java (JRE 8+) | Required to run HermiT and Themis | all versions | `sudo apt install default-jre` (already inside the Web App's container) |
+| LLM provider | Runs the agents | all versions | An [OpenRouter](https://openrouter.ai/) or [DeepSeek](https://platform.deepseek.com/) API key, or a local [Ollama](https://ollama.com/) |
+| Docker + Docker Compose v2 | Runs the four containers of the web application | Web App |
+
+## Documentation
+
+- [MASEO documentation](https://maseo.readthedocs.io/en/latest/?badge=latest) (readthedocs, for `MASEO`): [Install](https://maseo.readthedocs.io/en/latest/install/), [Configuration](https://maseo.readthedocs.io/en/latest/configuration/), [Output](https://maseo.readthedocs.io/en/latest/output/), [Evaluation](https://maseo.readthedocs.io/en/latest/eval/)
+- [MASEO README](src/maseo/README.md) — four-agent workflow, CLI and batch execution
+- [MASEO-MCP README](src/maseo_mcp/README.md) — agent-MCP-tool loop and its outputs
+- [MASEO-Atomic README](src/maseo_atomic/README.md) — new agents, MCP tool servers, experiment toggles, local execution
+- [MASEO Web App README](src/maseo_atomic_n8n/README.md) — deployment, usage and maintenance of the web application
+
+## Input/Output file format
+
+### Input
+
+Every version takes the competency questions as a JSON list of `id` / `value` pairs:
+
+```json
+[
+  {"id": "CQ1", "value": "Which wine characteristics should I consider when choosing a wine?"},
+  {"id": "CQ2", "value": "Is Bordeaux a red or white wine?"}
+]
+```
+
+| Version | Where the file goes |
+|---------|---------------------|
+| `MASEO` | Any path, passed with `--cqs_file`; batch runs read `src/maseo/dataset/cqs/<name>_cqs.json` |
+| `MASEO-MCP`, `MASEO-Atomic` | `dataset/<domain>_cq2onto_cqs.json` in the version's folder, run by domain name |
+| `MASEO Web App` | Typed on the form, or uploaded as `.json` (the format above), `.csv` (`id`, `value` columns) or `.txt` (one question per line, optionally `CQ1: ...`) |
+
+### Output
+
+| Version | Output |
+|---------|--------|
+| `MASEO` | The OWL ontology (RDF/XML) at `--save_file`; every entity carries a `vaem:rationale` and a `dc:source` log |
+| `MASEO-MCP` | `outputs/<domain>/`: the ontology, the mapped terms, the Themis test suite, test results, steps, run record and event trace |
+| `MASEO-Atomic` | `run.output_dir` (e.g. `outputs/<mode>/<model_id>/<domain>/`): raw and refined terms, axioms, tests, the initial, final and provenance ontology, and the steps |
+| `MASEO Web App` | The MASEO-Atomic files of each job, plus `run.log` and the input and output files of every step, as a zip download |
+
+The full list of files is in each version's README.
+
+
+
+<!-- ## MASOE Structural Overview
 
 The pipeline consists of four sequential stages:
 
@@ -18,14 +89,14 @@ The pipeline consists of four sequential stages:
 | `Ontology Generation Agent` |  Generates the initial OWL ontology from CQs | None |
 | `Syntax Repair Agent` | Fixes RDF/XML syntax errors reported by the parser | [rdflib](https://rdflib.readthedocs.io/en/stable/) |
 | `Logical Consistency Agent` | Repairs logical inconsistencies reported by HermiT | [HermiT Reasoner](http://www.hermit-reasoner.com/) |
-| `Pitfall Resolution Agent` | Resolves ontology modeling pitfalls reported by OOPS! | [OOPS!](https://oops.linkeddata.es/) |
+| `Pitfall Resolution Agent` | Resolves ontology modeling pitfalls reported by OOPS! | [OOPS!](https://oops.linkeddata.es/) | -->
 
-The illustration of the MASOE framework:
+<!-- The illustration of the MASOE framework:
 
-<img src="docs/image/maseo_framework.png" alt="maseo overview" width="500">
+<img src="docs/image/maseo_framework.png" alt="maseo overview" width="500"> -->
 
 
-### Features
+<!-- ### Features
 
 - **End-to-end automation** — from a list of CQs to a validated ontology
 - **Role-based agents** — each stage is handled by a dedicated LLM agent with a specific instruction and responsibility
@@ -137,7 +208,7 @@ Here are the structure of the how the output layout of MASEO_MCP, noted that the
 | `<domain>_tests.json` | every test execution: per-test verdicts, verdict history, sanitizer log |
 | `<domain>_steps.json` | one entry per step: agent call, tool call, prompt information and ontology source code snapshot |
 | `<domain>_run.json` | structured performance records with before/after effects per correction |
-| `<domain>_trace.jsonl` | complete event trace (full prompts, tool calls, results) |
+| `<domain>_trace.jsonl` | complete event trace (full prompts, tool calls, results) | -->
 
 # Acknowledgements
 
